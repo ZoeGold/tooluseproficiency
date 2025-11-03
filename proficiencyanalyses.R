@@ -848,9 +848,11 @@ ggplot(detseq_o2[detseq_o2$item == c("almendrabrown"),]) +
 # dev.off()
 
 ###### Models of tool use development ######
-detseq_o2$time <- as.numeric(detseq_o2$mediadate)
-head(detseq_o2$time)
+detseq_o2$days_since_start <- as.numeric(detseq_o2$mediadate - min(detseq_o2$mediadate))
+detseq_o2$days_z <- scale(detseq_o2$days_since_start)
 detseq_o2$subjectID_F <- as.factor(detseq_o2$subjectID)
+# change the reference level to SMG, the oldest tool user in this sample and so likely stable
+detseq_o2$subjectID_F <- relevel(detseq_o2$subjectID_F, ref = "SMG")
 detseq_o2$Age_f <- as.factor(detseq_o2$Age)
 # filter to only brown sea almonds
 detseq_o2ab <- detseq_o2[detseq_o2$item == "almendrabrown",]
@@ -858,8 +860,8 @@ detseq_o2ab <- droplevels.data.frame(detseq_o2ab)
 
 ## Model dev_m1 ##
 # outcome: n_pounds
-# fixed effects: log(time) * subjectID
-dev_m1 <- brm(n_pounds ~ log(time)*subjectID_F, data=detseq_o2ab, family="poisson", 
+# fixed effects: days_z * subjectID
+dev_m1 <- brm(n_pounds ~ days_z*subjectID_F, data=detseq_o2ab, family="poisson", 
               chains=3, cores = 3, backend = "cmdstanr", save_pars = save_pars(all = TRUE),
               iter =3000, init = 0, prior = normal_prior3, seed = 12345)
 # dev_m1 <- add_criterion(dev_m1, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
@@ -874,8 +876,31 @@ mcmc_plot(dev_m1)
 pp_check(dev_m1)
 
 loo(dev_m1) # all good
-loo_R2(dev_m1) # 0.18
-round(bayes_R2(dev_m1),2) # 0.19
+loo_R2(dev_m1) # 0.19
+round(bayes_R2(dev_m1),2) # 0.20
+
+# Compute conditional effects for days_z by subject
+ce <- conditional_effects(dev_m1, effects = "days_z:subjectID_F", re_formula = NA)
+
+# Extract the data frame
+ce_df <- ce$`days_z:subjectID_F`
+
+# Plot with ggplot and facet_wrap
+png("detailedtools/RDS/devpound_supp.png", width = 8, height = 7, units = 'in', res = 300)
+#ggplot(ce_df, aes(x = days_z, y = estimate__, ymin = lower__, ymax = upper__)) +
+  geom_ribbon(aes(ymin = lower__, ymax = upper__), alpha = 0.2) +
+  geom_line(color = "blue") +
+  geom_point(
+    data = detseq_o2,                    # your raw data
+    aes(x = days_z, y = n_pounds),       # raw data mapping
+    inherit.aes = FALSE,                 # do not inherit CE aesthetics
+    color = "black", alpha = 0.2
+  ) +
+  facet_wrap(~subjectID_F) +
+  labs(x = "Standardized days since start", y = "Predicted number of pounds") +
+  theme_bw() + theme(axis.text = element_text(size = 12),
+                     axis.title = element_text(size = 14))
+#dev.off()
 
 ###### Old age cut-off? ######
 # do we see ABE use tools at all in this dataset?
