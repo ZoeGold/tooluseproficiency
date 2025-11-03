@@ -21,6 +21,7 @@ library(easystats)
 library(scales)
 library(ggh4x)
 library(ggeffects)
+library(posterior)
 
 ### Load datasets, cleaned in BORIScleaningscript.R ####
 #detseq <- readRDS("detseq.rds")
@@ -71,89 +72,21 @@ table(detseq_o$location, detseq_o$deployment)
 ftable(detseq_o$subjectID) # for vast majority of sequences we can identify the tool user
 ftable(detseq_o$Age) # most sequences are by subadults, but good range of the different age classes
 nrow(detseq_o)
-# so at the moment have 3196 sequences
+# so at the moment have 3181 sequences
 
 # subset to the best of the best: known individuals, and no split videos
 # Split videos (spanning several videos) likely miss pounds, and as such are not reliable measures of efficiency
-ftable(detseq_o$split) # exclude 253 split sequences 
+ftable(detseq_o$split) # exclude 259 split sequences 
 ftable(detseq_o$subjectID) # exclude 43 not ID'd sequences 
 detseq_oi <- detseq_o[!detseq_o$subjectID %in% c("subadultmale", "juvenileunknown") & detseq_o$split == FALSE,]
 nrow(detseq_oi)
 ftable(detseq_oi$Age)
 # then end up with 2890 sequences
-
+detseq_oi <- droplevels.data.frame(detseq_oi)
 # make age a factor in the right order (for plotting)
 detseq_oi$Age <- factor(detseq_oi$Age, levels = c("Juvenile", "Subadult", "Adult"))
 
 ## Social attention ##
-
-## social attention coding dataframes, two levels
-head(socatt_seq) # aggregated to sequence
-head(socatt_ct) # every row a behavior occurrence
-
-# add variable whether there is social attention in the sequence
-socsequences <- unique(socatt_ct$sequenceID[which(socatt_ct$behavior == "socialattention")])
-socatt_ct$socatt <- ifelse(socatt_ct$sequenceID %in% socsequences, 1, 0)
-socatt_cts <- socatt_ct[socatt_ct$behavior == "socialattention",]
-
-#make dataframe with already all presence without social attention
-socatt_final <- socatt_ct[socatt_ct$behavior == "present" & socatt_ct$socatt == 0,]
-
-# work on the sequence level
-for(i in 1:length(socsequences)){
-  observers <- socatt_cts$subjectID[which(socatt_cts$sequenceID == socsequences[i])]
-  seq_present <- socatt_ct[socatt_ct$sequenceID == socsequences[i] & socatt_ct$behavior == "present",]
-  # set all socatt to 0 except for the individual paying social attention 
-  seq_present$socatt <- 0
-  #easiest to match for each observer
-  # for first observer, just take first line with matching presence 
-  # (e.g. if there are multiple juveniles just take the first, and make it a 1)
-  seq_present$socatt[which(seq_present$subjectID == observers[1])][1] <- 1
-  if(length(observers) > 1) {
-    # to avoid making the same one 1 again, subset to those still 0
-    seq_present$socatt[which(seq_present$subjectID == observers[2] & seq_present$socatt == 0)][1] <- 1
-  }
-  if(length(observers) > 2) {
-    seq_present$socatt[which(seq_present$subjectID == observers[3] & seq_present$socatt == 0)][1] <- 1
-  }
-  socatt_final <- rbind(socatt_final, seq_present)
-}
-
-socatt_final <- socatt_final[order(socatt_final$sequenceID),]
-# in this sample, we have:
-length(unique(socatt_final$sequenceID))
-# 991 sequences with capuchins present
-# now attach the relevant information from the main dataframe (information on the tool user etc)
-head(detseq)
-detseq$socialattention <- detseq$socatt
-
-socatt_final <- left_join(socatt_final, detseq[,c("sequenceID", "subjectID", "coder", "location", "item",
-                                                  "outcome", "displacement", "scrounging", "socialattention",
-                                                  "anviltype", "seqduration", "n_pounds", "n_misstotal",
-                                                  "Age", "deployment", "split", "hammerswitches", "anvilswitches")],
-                          by = "sequenceID")
-
-# also add more detailed information on number of capuchins present, number scrounging etc, from the social coding
-head(socatt_seq)
-socatt_final <- left_join(socatt_final, socatt_seq[,c("sequenceID", "n_socatt", "n_disp", "n_scr", "p_total", "tol_scrounge", "aft_scrounge", "steal_scrounge")],
-                          by = "sequenceID")
-
-# clean up the final dataframe
-head(socatt_final)
-# subjectID.x = observer, coder.x = coder of social attention
-socatt_final$observerID <- socatt_final$subjectID.x
-socatt_final$tooluserID <- socatt_final$subjectID.y
-socatt_final$coder_socatt <- socatt_final$coder.x
-socatt_final$coder_tooluse <- socatt_final$coder.y
-socatt_final$observer_agesex <- ifelse(str_detect(socatt_final$agesex, "juvenile"), "juvenile", socatt_final$agesex)
-socatt_final$tooluser_age <- socatt_final$Age
-# variable for if there is social attention in sequence
-socatt_final$socialattention <- ifelse(socatt_final$sequenceID %in% socsequences, "socialattention", "nosocialattention")
-
-socatt_final <- socatt_final[,c("sequenceID", "videoID", "deployment", "location", "anviltype", "seqduration", "coder_socatt", 
-                                "coder_tooluse", "split", "item", "observerID", "observer_agesex", "socatt","tooluserID", "tooluser_age",
-                                "n_pounds", "n_misstotal", "hammerswitches", "anvilswitches", "n_socatt", "n_disp", "n_scr", "p_total",
-                                "outcome", "displacement", "scrounging", "socialattention", "tol_scrounge", "aft_scrounge", "steal_scrounge")]
 
 # some descriptives
 # how many of these sequences are split across various videos (so information missing)
@@ -211,9 +144,6 @@ normal_prior4 <- c(prior(normal(0,1), class = b),
                    prior(normal(0,1), class = Intercept),
                    prior(normal(0,1), class = sd, lb = 0))
 
-
-
-
 ###
 ### PROFICIENCY ####
 ###
@@ -270,8 +200,8 @@ m_e1 <- brm(seqduration ~ Age + item + anviltype + (1|subjectID), data = detseq_
 # m_e1 <- add_criterion(m_e1, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving model to not have to run it again
-# saveRDS(m_e1, "m_e1.rds")
-# m_e1 <- readRDS("m_e1.rds")
+# saveRDS(m_e1, "detailedtools/RDS/m_e1.rds")
+# m_e1 <- readRDS("detailedtools/RDS/m_e1.rds")
 
 # Diagnostics
 summary(m_e1)
@@ -280,18 +210,18 @@ pp_check(m_e1)
 plot(conditional_effects(m_e1))
 
 loo(m_e1) # had one influential case (which is observation 265, Ink who is adult but bad)
-loo_R2(m_e1) # 0.22
-round(bayes_R2(m_e1),2) # 0.23
+loo_R2(m_e1) # 0.24
+round(bayes_R2(m_e1),2) # 0.24
 
 plot(m_e1$criteria$loo, label_points = TRUE)
 
 # Interpretation
-round(c(exp(0.4), exp(0.29), exp(0.5)),2)
+round(c(exp(0.4), exp(0.29), exp(0.51)),2)
 
 hypothesis(m_e1, "Intercept  > Intercept + AgeSubadult", alpha = 0.05)
 hypothesis(m_e1, "Intercept  > Intercept + AgeAdult", alpha = 0.05)
 hypothesis(m_e1, "Intercept + AgeAdult  < Intercept + AgeSubadult", alpha = 0.05)
-hypothesis(m_e1, "Intercept + itemalmendrared > Intercept", alpha = 0.05)
+hypothesis(m_e1, "Intercept + itemalmendragreen > Intercept", alpha = 0.05)
 
 # report(m_e1)
 
@@ -303,7 +233,7 @@ m_type_pred <- m_e1 %>%
                                subjectID = detseq_oi$subjectID))
 
 # Age difference in duration to open item
-# png("m_e1_age.png", width = 8, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/m_e1_age.png", width = 8, height = 7, units = 'in', res = 300)
 ggplot(data = m_type_pred, aes(x = Age, y = .epred)) + geom_violin(aes(color = Age, fill = Age), alpha = 0.4)  +
   stat_summary(detseq_oi, inherit.aes = FALSE, mapping=aes(x = Age, y = seqduration, color = Age), geom = "point", fun = "mean",
                size = 4) +
@@ -316,7 +246,7 @@ ggplot(data = m_type_pred, aes(x = Age, y = .epred)) + geom_violin(aes(color = A
 # dev.off()
 
 # Sea almond ripeness difference in duration to open item
-# png("m_e1_item.png", width = 8, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/m_e1_item.png", width = 8, height = 7, units = 'in', res = 300)
 ggplot(data = m_type_pred, aes(x = item, y = .epred)) + geom_violin(aes(color = item, fill = item), alpha = 0.4) + ylim(0,100) +
   stat_summary(detseq_oi, inherit.aes = FALSE, mapping=aes(x = item, y = seqduration, color = item), geom = "point", fun = "mean",
                size = 4) +
@@ -369,8 +299,8 @@ m_e2 <- brm(n_pounds ~ Age + item + anviltype + (1|subjectID), data = detseq_oi,
 # m_e2 <- add_criterion(m_e2, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # save and load model
-# saveRDS(m_e2, "m_e2.rds")
-# m_e2 <- readRDS("m_e2.rds")
+# saveRDS(m_e2, "detailedtools/RDS/m_e2.rds")
+# m_e2 <- readRDS("detailedtools/RDS/m_e2.rds")
 
 # Diagnostics
 summary(m_e2)
@@ -379,12 +309,12 @@ mcmc_plot(m_e2)
 plot(conditional_effects(m_e2))
 
 loo(m_e2) # all cases good
-loo_R2(m_e2) # 0.12
-round(bayes_R2(m_e2),2) # 0.12
+loo_R2(m_e2) # 0.14
+round(bayes_R2(m_e2),2) # 0.14
 
 # Interpretation
-round(c(exp(0.09), exp(0.06), exp(0.13)),2)
-hypothesis(m_e2, "Intercept + itemalmendrared > Intercept", alpha = 0.05)
+round(c(exp(1.69), exp(1.50), exp(1.85)),2)
+hypothesis(m_e2, "Intercept + itemalmendragreen > Intercept", alpha = 0.05)
 hypothesis(m_e2, "Intercept > Intercept + AgeSubadult", alpha = 0.05)
 hypothesis(m_e2, "Intercept + AgeAdult > Intercept + AgeSubadult", alpha = 0.05)
 hypothesis(m_e2, "Intercept > Intercept + anviltypewood", alpha = 0.05)
@@ -397,7 +327,7 @@ m_type_pred2 <- m_e2 %>%
                                subjectID = detseq_oi$subjectID))
 
 # Age difference in number of pounds to open item
-# png("m_e2_pound.png", width = 8, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/m_e2_pound.png", width = 8, height = 7, units = 'in', res = 300)
 ggplot(data = m_type_pred2, aes(x = Age, y = .epred)) + geom_violin(aes(color = Age, fill = Age), alpha = 0.4) +
   stat_summary(detseq_oi, inherit.aes = FALSE, mapping=aes(x = Age, y = n_pounds, color = Age), geom = "point", fun = "mean",
                size = 4) +
@@ -424,7 +354,7 @@ ggplot(data = m_type_pred2, aes(x = item, y = .epred)) + geom_violin(aes(color =
 # colors for juvenile, subadult, adult
 cols <- viridis(3, option = "plasma", end = 0.8)
 
-# png("duration_pound.png", width = 8, height = 6, units = 'in', res = 300)
+# png("detailedtools/RDS/duration_pound.png", width = 8, height = 6, units = 'in', res = 300)
 ggplot(detseq_oi, aes(y = seqduration, x = n_pounds, color = Age, shape = Age)) + geom_point(size = 3, alpha = 0.3) + geom_smooth() + 
   scale_color_viridis_d(option = "plasma", end = 0.8) +
   labs(y = "Seconds needed to open item", x = "Number of pounds needed to open item") +
@@ -439,8 +369,8 @@ m_e2b <- brm(n_pounds ~ Age + item + anviltype + (1|subjectID) + offset(log(seqd
 # m_e2b <- add_criterion(m_e2b, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # save and load model
-# saveRDS(m_e2b, "m_e2b.rds")
-# m_e2b <- readRDS("m_e2b.rds")
+# saveRDS(m_e2b, "detailedtools/RDS/m_e2b.rds")
+# m_e2b <- readRDS("detailedtools/RDS/m_e2b.rds")
 
 # Diagnostics
 summary(m_e2b)
@@ -449,13 +379,13 @@ mcmc_plot(m_e2b)
 plot(conditional_effects(m_e2b))
 
 loo(m_e2b) # all cases good
-loo_R2(m_e2b) # 0.40
-round(bayes_R2(m_e2b),2) # 0.69
+loo_R2(m_e2b) # 0.31
+round(bayes_R2(m_e2b),2) # 0.67
 
 # Interpretation
-round(c(exp(-0.3), exp(-0.49), exp(-0.12)),2)
+round(c(exp(-0.3), exp(-0.5), exp(-0.12)),2)
 hypothesis(m_e2b, "Intercept + itemalmendragreen > Intercept", alpha = 0.05)
-hypothesis(m_e2b, "Intercept < Intercept + AgeSubadult", alpha = 0.05)
+hypothesis(m_e2b, "Intercept < Intercept + AgeAdult", alpha = 0.05)
 hypothesis(m_e2b, "Intercept > Intercept + anviltypewood", alpha = 0.05)
 
 ##### 3. Number of repositions and peels ######
@@ -489,8 +419,8 @@ m_e3a <- brm(n_itemreposit ~ Age + item + anviltype + (1|subjectID), data = dets
 # m_e3a <- add_criterion(m_e3a, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving and loading model
-# saveRDS(m_e3a, "m_e3a.rds")
-# m_e3a <- readRDS("m_e3a.rds")
+# saveRDS(m_e3a, "detailedtools/RDS/m_e3a.rds")
+# m_e3a <- readRDS("detailedtools/RDS/m_e3a.rds")
 
 # diagnostics
 summary(m_e3a)
@@ -499,7 +429,7 @@ pp_check(m_e3a)
 plot(conditional_effects(m_e3a))
 
 loo(m_e3a) # all cases good
-round(loo_R2(m_e3a),2) # 0.15
+round(loo_R2(m_e3a),2) # 0.17
 round(bayes_R2(m_e3a),2) # 0.17 
 
 # Interpretation
@@ -554,8 +484,8 @@ m_e3b <- brm(n_peel ~ Age + item + anviltype + (1|subjectID), data = detseq_oi,
 # m_e3b <- add_criterion(m_e3b, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving and loading model
-# saveRDS(m_e3b, "m_e3b.rds")
-# m_e3b <- readRDS("m_e3b.rds")
+# saveRDS(m_e3b, "detailedtools/RDS/m_e3b.rds")
+# m_e3b <- readRDS("detailedtools/RDS/m_e3b.rds")
 
 # diagnostics
 summary(m_e3b)
@@ -568,8 +498,8 @@ round(loo_R2(m_e3b),2) # 0.11
 round(bayes_R2(m_e3b),2) # 0.12
 
 # Interpretation
-round(c(exp(0.39), exp(0.21), exp(0.56)),2)
-hypothesis(m_e3b, "Intercept > Intercept + AgeAdult", alpha = 0.05)
+round(c(exp(0.31), exp(0.14), exp(0.48)),2)
+hypothesis(m_e3b, "Intercept > Intercept + AgeSubadult", alpha = 0.05)
 hypothesis(m_e3b, "Intercept + itemalmendragreen > Intercept", alpha = 0.05)
 
 # make violin plot
@@ -639,8 +569,8 @@ m_e4a <- brm(n_miss ~ Age + item + anviltype + (1|subjectID), data = detseq_oi, 
 # m_e4a <- add_criterion(m_e4a, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving and loading model
-# saveRDS(m_e4a, "m_e4a.rds")
-# m_e4a <- readRDS("m_e4a.rds")
+# saveRDS(m_e4a, "detailedtools/RDS/m_e4a.rds")
+# m_e4a <- readRDS("detailedtools/RDS/m_e4a.rds")
 
 # diagnostics
 summary(m_e4a)
@@ -649,12 +579,12 @@ pp_check(m_e4a)
 plot(conditional_effects(m_e4a))
 
 loo(m_e4a) # all cases good
-loo_R2(m_e4a) # 0.20
-round(bayes_R2(m_e4a),2) # 0.16
+loo_R2(m_e4a) # 0.21
+round(bayes_R2(m_e4a),2) # 0.18
 
 # Interpretation
-round(c(exp(-1.97-0.79), exp(-1.97-2.45), exp(-1.97+0.92)),2)
-hypothesis(m_e4a, "Intercept > Intercept + AgeSubadult", alpha = 0.05)
+round(c(exp(-2.31), exp(-3.84), exp(-0.98)),2)
+hypothesis(m_e4a, "Intercept  > Intercept + AgeAdult", alpha = 0.05)
 
 # make violin plot
 m_type_pred4 <- m_e4a %>% 
@@ -705,8 +635,8 @@ m_e4b <- brm(n_flies ~ Age + item + anviltype + (1|subjectID), data = detseq_oi,
 # m_e4b <- add_criterion(m_e4b, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving and loading model
-# saveRDS(m_e4b, "m_e4b.rds")
-# m_e4b <- readRDS("m_e4b.rds")
+# saveRDS(m_e4b, "detailedtools/RDS/m_e4b.rds")
+# m_e4b <- readRDS("detailedtools/RDS/m_e4b.rds")
 
 # diagnostics
 summary(m_e4b)
@@ -715,11 +645,11 @@ pp_check(m_e4b)
 plot(conditional_effects(m_e4b))
 
 loo(m_e4b) # all cases good
-loo_R2(m_e4b) # 0.12
-round(bayes_R2(m_e4b),2) # 0.11
+loo_R2(m_e4b) # 0.11
+round(bayes_R2(m_e4b),2) # 0.10
 
 # Interpretation
-round(c(exp(0.9), exp(0.24), exp(1.53)),2)
+round(c(exp(1.29), exp(0.96), exp(1.62)),2)
 hypothesis(m_e4b, "Intercept > Intercept + AgeSubadult", alpha = 0.05)
 hypothesis(m_e4b, "Intercept > Intercept + anviltypewood", alpha = 0.05)
 hypothesis(m_e4b, "Intercept + itemalmendragreen > Intercept", alpha = 0.05)
@@ -761,7 +691,7 @@ m_type_predtotal1 <- melt(m_type_predtotal[,c("item", "Age", "anviltype", "subje
 # colors for pound, reposit, peel
 cols_a <- viridis(4, option = "viridis", end = 0.8)
 
-# png("poundrepositpeel.png", width = 8, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/poundrepositpeel.png", width = 8, height = 7, units = 'in', res = 300)
 ggplot(data = m_type_predtotal1, aes(x = Age)) + 
   geom_violin(aes(x = Age, y = value, col = variable, fill = variable), alpha = 0.4) +
   stat_summary(detseq_oi, inherit.aes = FALSE, 
@@ -786,7 +716,7 @@ m_type_predtotal2 <- melt(m_type_predtotal[,c("item", "Age", "anviltype", "subje
 
 cols2 <- viridis(2, option = "inferno", end = 0.8)
 
-# png("mistakes.png", width = 8, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/mistakes.png", width = 8, height = 7, units = 'in', res = 300)
 ggplot(data = m_type_predtotal2, aes(x = Age)) + 
   geom_violin(aes(x = Age, y = value, col = variable, fill = variable), alpha = 0.4) +
   stat_summary(detseq_oi, inherit.aes = FALSE, 
@@ -854,7 +784,7 @@ ggplot(detseq_o2, aes(x=subjectID, y=n_miss, color = Age, fill = Age)) +
                      axis.title = element_text(size = 14)) 
 
 # comparing n_pounds, n_miss, n_reposit for known individuals
-melt_detseq <- melt(detseq_o2, measure.vars = c("n_pounds", "n_misstotal", "n_itemreposit"))
+melt_detseq <- reshape2::melt(detseq_o2, measure.vars = c("n_pounds", "n_misstotal", "n_itemreposit"))
 
 ggplot(melt_detseq) + geom_violin(aes(y = value, x = variable, color = variable, fill = variable), alpha = 0.4) +
   stat_summary(melt_detseq, inherit.aes = FALSE, mapping=aes(x = variable, y = value, color = variable), geom = "point", fun = "mean",
@@ -890,7 +820,7 @@ ggplot(detseq_o2[detseq_o2$item == c("almendrabrown"),]) + geom_point(aes(x = me
   facet_wrap(~subjectID) + theme_bw() + ggtitle("Brown Almendra") + labs(x = "Date", y = "Number of repositions per sequence") +theme(axis.text = element_text(size = 12),                                                                                                                  axis.title = element_text(size = 14)) + ylim(c(0,10))
 
 # combining n_pounds, n_miss and n_repositions for brown almendras
-# png("eff_dev.png", width = 9, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/eff_dev.png", width = 9, height = 7, units = 'in', res = 300)
 ggplot(detseq_o2[detseq_o2$item == c("almendrabrown"),]) + 
   geom_point(aes(x = mediadate, y = n_pounds, color = "Pounds", shape = location), alpha = 0.2, size = 2) + 
   geom_point(aes(x = mediadate, y = n_itemreposit, color = "Repositions", shape = location), alpha = 0.2, size = 2) + 
@@ -935,8 +865,8 @@ dev_m1 <- brm(n_pounds ~ log(time)*subjectID_F, data=detseq_o2ab, family="poisso
 # dev_m1 <- add_criterion(dev_m1, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving and loading model
-# saveRDS(dev_m1, "dev_m1.rds")
-# dev_m1 <- readRDS("dev_m1.rds")
+# saveRDS(dev_m1, "detailedtools/RDS/dev_m1.rds")
+# dev_m1 <- readRDS("detailedtools/RDS/dev_m1.rds")
 
 summary(dev_m1)
 plot(conditional_effects(dev_m1))
@@ -945,7 +875,7 @@ pp_check(dev_m1)
 
 loo(dev_m1) # all good
 loo_R2(dev_m1) # 0.18
-round(bayes_R2(dev_m1),2) # 0.18
+round(bayes_R2(dev_m1),2) # 0.19
 
 ###### Old age cut-off? ######
 # do we see ABE use tools at all in this dataset?
@@ -960,13 +890,13 @@ plot(ABE_only$seq_start, ABE_only$tooluse)
 
 # do we see ABE displace/scrounge? 
 ABEcomment <- dettools_r2[str_detect(dettools_r2$comment, "ABE|Abraham"),]
-# 13 recorded instances of him displacing and scrounging
+# 14 recorded instances of him displacing and scrounging
 # how many of displacements is ABE?
 displacers <- append(socatt_seq$disp_ID1, socatt_seq$disp_ID2)
 displacers <- displacers[!is.na(displacers)]
 ftable(displacers)
-sum(socatt_final$n_disp) # 165 total displacements
-ftable(socatt_final$n_scr) # 400 total scrounging events
+sum(socatt_final$n_disp) # 176 total displacements
+ftable(socatt_final$n_scr) # 414 total scrounging events
 
 ###
 ### SOCIAL ATTENTION ####
@@ -1006,6 +936,10 @@ socialattentioners <- append(socialattentioners, socatt_seq$socatt_ID3)
 socialattentioners <- socialattentioners[!is.na(socialattentioners)]
 ftable(socialattentioners)
 
+# who is present
+head(present_as)
+colSums(present_as[,1:5])
+
 ##### What predicts social attention? #####
 
 ### Model socatt_bm1 ###
@@ -1043,8 +977,8 @@ socatt_bm1 <- brm(socatt ~ tooluser_age + observer_agesex + location + p_total +
 # socatt_bm1 <- add_criterion(socatt_bm1, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving and loading model
-# saveRDS(socatt_bm1, "socatt_bm1.rds")
-# socatt_bm1 <- readRDS("socatt_bm1.rds")
+# saveRDS(socatt_bm1, "detailedtools/RDS/socatt_bm1.rds")
+# socatt_bm1 <- readRDS("detailedtools/RDS/socatt_bm1.rds")
 
 # Diagnostics
 summary(socatt_bm1)
@@ -1053,17 +987,29 @@ plot(conditional_effects(socatt_bm1))
 plot(socatt_bm1)
 
 loo(socatt_bm1) # all cases good
-loo_R2(socatt_bm1) # 0.30
+loo_R2(socatt_bm1) # 0.29
 round(bayes_R2(socatt_bm1),2) # 0.26
 
-post <- as_draws(socatt_bm1)
-post %>%
-  group_by(b_p_total) %>%
-  mode_hdi() %>%
-  mutate_if(is.double, round, digits = 3)
-mode_hdci(c(post$`1`$b_p_total, post$`2`$b_p_total, post$`3`$b_p_total), width = 0.95, group = "tooluser_age")
+post <- as_draws_df(socatt_bm1)
+post_age <- post %>%
+  mutate(
+    Juvenile = b_Intercept,
+    Subadult = b_Intercept + b_tooluser_ageSubadult,
+    Adult = b_Intercept + b_tooluser_ageAdult
+  ) %>%
+  pivot_longer(cols = c(Juvenile, Subadult, Adult),
+               names_to = "tooluser_age",
+               values_to = "log_mu")
 
-head(post$`1`)
+summary_age <- post_age %>%
+  group_by(tooluser_age) %>%
+  median_qi(exp(log_mu), .width = 0.95) %>%
+  rename(estimate = 'exp(log_mu)', l95 = .lower, u95 = .upper) %>%
+  mutate(across(where(is.numeric), round, 2)) %>%
+  ungroup()
+
+summary_age
+
 # Interpretation
 logit2prob <- function(logit){
   odds <- exp(logit)
@@ -1074,7 +1020,7 @@ logit2prob <- function(logit){
 logit2prob(-0.38)
 
 ggpredict(socatt_bm1, term = c("tooluser_age"))
-ggpredict(socatt_bm1, term = c("observer_agesex", "tooluser_age[Subadult]"))
+ggpredict(socatt_bm1, term = c("observer_agesex", "tooluser_age[Adult]"))
 ggpredict(socatt_bm1, term = c("location", "observer_agesex[juvenile]", "tooluser_age[Subadult]"))
 ggpredict(socatt_bm1, term = c("p_total"))
 
@@ -1124,7 +1070,7 @@ scrplot$sizescrounge <- aggregate(socatt_final[, c("socatt")], list(socatt_final
 presentplot$socatt <- aggregate(socatt_final[, c("socatt")], list(socatt_final$p_total), mean)[2]$x
 presentplot$sizepresent <- aggregate(socatt_final[, c("socatt")], list(socatt_final$p_total), length)[2]$x
 
-# png("socatt_scrpre.png", width = 8, height = 6, units = 'in', res = 300)
+# png("detailedtools/RDS/socatt_scrpre.png", width = 8, height = 6, units = 'in', res = 300)
 soc_present  + theme_bw() +
   stat_summary(data = presentplot, inherit.aes = FALSE, aes(x = p_total, y = socatt, fill = sizepresent), 
                geom = "point", fun = "mean", size = 3, shape = 24, alpha = 0.5) + scale_fill_viridis(limits = c(0,1000)) + 
@@ -1164,8 +1110,8 @@ socatt_bm1b <- brm(socatt ~ tooluser_age + n_pounds + observer_agesex + n_missto
 # socatt_bm1b <- add_criterion(socatt_bm1b, c("loo", "loo_R2", "bayes_R2"), reloo = TRUE, backend = "cmdstanr", ndraws = 3000) 
 
 # saving and loading model
-# saveRDS(socatt_bm1b, "socatt_bm1b.rds")
-# socatt_bm1b <- readRDS("socatt_bm1b.rds")
+# saveRDS(socatt_bm1b, "detailedtools/RDS/socatt_bm1b.rds")
+# socatt_bm1b <- readRDS("detailedtools/RDS/socatt_bm1b.rds")
 
 # Diagnostics
 summary(socatt_bm1b)
@@ -1199,7 +1145,7 @@ socatt_idgraph$opportunity <- graphopp_socatt$x
 
 socatt_bm1b_pred$tooluserID_r <- factor(socatt_bm1b_pred$tooluserID, levels = c("BAL", "JOE", "PEA", "TER", "ZIM", "LAR", "MIC", "SPT", "SMG", "TOM"))
 
-# png("socatt_ids.png", width = 8, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/socatt_ids.png", width = 8, height = 7, units = 'in', res = 300)
 ggplot(data = socatt_bm1b_pred, aes(x = tooluserID_r, y = .epred)) + geom_violin(aes(color = tooluser_age, fill = tooluser_age), alpha = 0.4) +
   stat_summary(socatt_finali, inherit.aes = FALSE, mapping=aes(x = tooluserID, y = socatt, color = tooluser_age), geom = "point", fun = "mean",
                size = 4) + scale_fill_manual(values = cols_obs) + scale_color_manual(values = cols_obs) +
@@ -1211,6 +1157,6 @@ ggplot(data = socatt_bm1b_pred, aes(x = tooluserID_r, y = .epred)) + geom_violin
                      axis.title = element_text(size = 14)) + theme(axis.text.x = element_text(angle =45, hjust = 1))
 # dev.off()
 
-# png("socatt_eff.png", width = 8, height = 7, units = 'in', res = 300)
+# png("detailedtools/RDS/socatt_eff.png", width = 8, height = 7, units = 'in', res = 300)
 plot(ggpredict(socatt_bm1b, terms = c("n_pounds", "tooluser_age", "observer_agesex"))) + labs(x = "Number of pounds", y = "Predicted probability of social attention", title = "Age-sex class of observer")
 #dev.off()
