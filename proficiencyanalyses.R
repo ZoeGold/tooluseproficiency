@@ -86,6 +86,24 @@ detseq_oi <- droplevels.data.frame(detseq_oi)
 # make age a factor in the right order (for plotting)
 detseq_oi$Age <- factor(detseq_oi$Age, levels = c("Juvenile", "Subadult", "Adult"))
 
+## Failures ##
+# consider sequences were item was abandoned
+abandoned_all <- detseq[detseq$outcome == "abandoned",]
+abandoned_all$subjectIDF <- as.factor(abandoned_all$subjectID)
+abandoned_all_long <- dettools_r2[dettools_r2$outcome == "abandoned",]
+comments <- abandoned_all_long[which(abandoned_all_long$behavior == "seqend"),]
+
+ftable(abandoned_all$age)
+ftable(abandoned_all$subjectID)
+summary(abandoned_all$n_misstotal)
+summary(abandoned_all$n_pounds)
+summary(abandoned_all$seqduration)
+ftable(abandoned_all$item)
+ftable(abandoned_all$displacement)
+
+ggplot(data = abandoned_all, aes(y = n_pounds,  x= mediadate, group = subjectID, col = subjectID)) + geom_point() + theme_bw() +
+  facet_wrap(~subjectID)
+
 ## Social attention ##
 
 # some descriptives
@@ -108,6 +126,30 @@ socatt_final <- socatt_final[socatt_final$split == FALSE &
                                !socatt_final$outcome == "None" & !socatt_final$outcome == "Unknown",]
 # then have 844 sequences
 length(unique(socatt_final$sequenceID))
+
+# how successful at IDing juveniles
+ftable(socatt_final$observerID)
+
+# check whether more capuchins present --> more adults present
+head(socatt_final)
+
+group_summary <- socatt_final %>%
+  group_by(sequenceID) %>%
+  summarise(
+    total_capuchins = n(),                            # total observers in the sequence
+    n_juveniles = sum(observer_agesex == "juvenile"), # number of juveniles
+    n_adults = sum(observer_agesex %in% c("adultfemale","adultmale")), # number of adults
+    prop_juveniles = n_juveniles / total_capuchins   # proportion of juveniles
+  )
+
+head(group_summary)
+
+cor(group_summary$total_capuchins, group_summary$prop_juveniles)
+
+ggplot(group_summary, aes(x = total_capuchins, y = prop_juveniles)) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(x = "Total capuchins per sequence", y = "Proportion of juveniles")
 
 ### PRIORS ####
 ## need to set appropriate priors for models of different families
