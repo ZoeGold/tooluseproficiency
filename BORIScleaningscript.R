@@ -105,6 +105,13 @@ head(dettools_r$sequenceID)
 # if there was a comment that the ending was missed or unknown, then change outcome from "none"  to "unknown"
 dettools_r$modifier1[which(dettools_r$behavior == "seqend" & dettools_r$modifier1 == "None" &
                              str_detect(dettools_r$comment, "unknown|missed|missing|not done|not continued|not on video|not sure|unkown|ends before|not on camera") == TRUE)] <- "Unknown"
+# create a specific flag for opened but not eaten (which is different from truly abandoned)
+dettools_r$modifier1[which(dettools_r$behavior == "seqend" & dettools_r$modifier1 == "abandoned" & 
+                             str_detect(dettools_r$comment, "open") == TRUE)] <- "abandoned_opened"
+dettools_r$modifier1[which(dettools_r$behavior == "seqend" & dettools_r$modifier1 == "abandoned" & 
+                             str_detect(dettools_r$comment, "displace") == TRUE)] <- "abandoned_displaced"
+
+ftable(dettools_r$modifier1[which(dettools_r$behavior == "seqend")])
 
 ### Extract modifiers per sequence ####
 # make dataframe with sequence_level information and populate it, then left_join at the end
